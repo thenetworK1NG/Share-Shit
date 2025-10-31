@@ -3,27 +3,27 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Web SHAREit Clone (QR Scan)</title>
+<title>Web SHAREit Clone (Optimized QR + Camera)</title>
 <style>
   body {
     font-family: "Poppins", sans-serif;
-    background: linear-gradient(135deg, #141e30, #243b55);
+    background: linear-gradient(135deg, #0d1117, #1e293b);
     color: #fff;
     text-align: center;
     margin: 0;
-    padding: 40px;
+    padding: 30px;
   }
-  h1 { font-size: 2em; margin-bottom: 20px; }
+  h1 { font-size: 1.8em; margin-bottom: 10px; }
   .card {
-    background: rgba(255,255,255,0.1);
-    padding: 25px;
-    border-radius: 15px;
+    background: rgba(255,255,255,0.08);
+    padding: 20px;
+    border-radius: 16px;
     box-shadow: 0 0 10px rgba(0,0,0,0.3);
     width: 90%;
     max-width: 420px;
     margin: 20px auto;
   }
-  input[type="file"], input[type="text"] {
+  input[type="file"] {
     width: 90%;
     margin: 10px auto;
     padding: 10px;
@@ -39,13 +39,14 @@
     cursor: pointer;
     transition: 0.3s;
     margin: 10px;
+    font-size: 1em;
   }
   button:hover { background: #0099cc; }
   #qrCanvas, #reader {
     margin: 10px auto;
-    background: white;
     padding: 10px;
-    border-radius: 10px;
+    background: white;
+    border-radius: 12px;
     display: none;
   }
   #progress {
@@ -70,34 +71,37 @@
 </head>
 <body>
 
-<h1>⚡ Web SHAREit Clone (QR Scan)</h1>
-<p>Share files instantly between two phones using QR scan</p>
+<h1>⚡ Web SHAREit Clone (Optimized)</h1>
+<p>Faster camera scan & HD QR</p>
 
 <div class="card">
   <h2>📤 Sender</h2>
   <input type="file" id="fileInput"><br>
   <button id="createOfferBtn">Create QR Code</button>
   <canvas id="qrCanvas"></canvas>
-  <p><small>Receiver can scan this QR code</small></p>
+  <p><small>Receiver scans this QR</small></p>
 </div>
 
 <div class="card">
   <h2>📥 Receiver</h2>
   <button id="scanQRBtn">📷 Scan QR Code</button><br>
-  <div id="reader" style="width:300px"></div>
+  <div id="reader" style="width:300px; border-radius:12px; overflow:hidden;"></div>
 </div>
 
 <div id="progress"><div></div></div>
 <p id="status">Idle</p>
 
+<!-- QR generator -->
 <script src="https://cdn.jsdelivr.net/npm/qrious/dist/qrious.min.js"></script>
-<script src="https://unpkg.com/html5-qrcode"></script>
+<!-- QR scanner -->
+<script src="https://unpkg.com/html5-qrcode@2.3.8/minified/html5-qrcode.min.js"></script>
+
 <script>
 let pc, dataChannel, fileReader, file;
 let receivedBuffer = [], receivedSize = 0, currentFileName = "";
 let isSender = false;
 
-// Peer connection setup
+// Create Peer Connection
 function createPeerConnection() {
   pc = new RTCPeerConnection();
   pc.onicecandidate = e => {
@@ -113,7 +117,7 @@ function createPeerConnection() {
   };
 }
 
-// Setup data channel
+// Setup DataChannel
 function setupDataChannel() {
   dataChannel.onopen = () => {
     document.getElementById("status").textContent = "✅ Connected!";
@@ -141,18 +145,22 @@ function setupDataChannel() {
   };
 }
 
-// QR generator
+// Generate HD QR code
 function showQRCode(text) {
+  const canvas = document.getElementById("qrCanvas");
+  canvas.width = 512;
+  canvas.height = 512;
   const qr = new QRious({
-    element: document.getElementById("qrCanvas"),
+    element: canvas,
     value: text,
-    size: 200
+    size: 512, // high-res QR
+    level: 'H' // high error correction
   });
-  document.getElementById("qrCanvas").style.display = "block";
-  document.getElementById("status").textContent = "📱 Receiver can scan this QR code now.";
+  canvas.style.display = "block";
+  document.getElementById("status").textContent = "📱 Scan with receiver phone.";
 }
 
-// Sender
+// Sender create offer
 document.getElementById("createOfferBtn").onclick = async () => {
   isSender = true;
   createPeerConnection();
@@ -160,14 +168,21 @@ document.getElementById("createOfferBtn").onclick = async () => {
   setupDataChannel();
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
-  document.getElementById("status").textContent = "Generating QR code...";
+  document.getElementById("status").textContent = "Generating QR...";
 };
 
-// Receiver QR Scan
+// Receiver QR scan
 document.getElementById("scanQRBtn").onclick = async () => {
   document.getElementById("reader").style.display = "block";
   const html5QrCode = new Html5Qrcode("reader");
-  const config = { fps: 10, qrbox: 250 };
+
+  // optimized scanning config
+  const config = {
+    fps: 8,
+    qrbox: { width: 250, height: 250 },
+    aspectRatio: 1.0,
+    disableFlip: false,
+  };
 
   html5QrCode.start(
     { facingMode: "environment" },
@@ -175,13 +190,16 @@ document.getElementById("scanQRBtn").onclick = async () => {
     async (decodedText) => {
       document.getElementById("status").textContent = "QR detected! Connecting...";
       html5QrCode.stop();
+      document.getElementById("reader").style.display = "none";
       await connectAsReceiver(decodedText);
     },
-    (errorMessage) => { /* ignore decode errors */ }
-  );
+    (errorMessage) => { /* ignore minor errors */ }
+  ).catch(err => {
+    document.getElementById("status").textContent = "Camera access failed: " + err;
+  });
 };
 
-// Receiver connect function
+// Receiver connect
 async function connectAsReceiver(offerCode) {
   createPeerConnection();
   const offer = JSON.parse(atob(offerCode));
@@ -191,12 +209,10 @@ async function connectAsReceiver(offerCode) {
   document.getElementById("status").textContent = "Connected. Waiting for file...";
 }
 
-// File selection
-document.getElementById("fileInput").onchange = e => {
-  file = e.target.files[0];
-};
+// File handling
+document.getElementById("fileInput").onchange = e => { file = e.target.files[0]; };
 
-// File sending
+// Send file in chunks
 function sendFile(file) {
   dataChannel.send("FILE:" + file.name);
   const chunkSize = 16384;
@@ -221,6 +237,5 @@ function sendFile(file) {
   readSlice(0);
 }
 </script>
-
 </body>
 </html>
