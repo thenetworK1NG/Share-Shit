@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Web SHAREit Clone (QR Scan)</title>
+<style>
+  body {
+    font-family: "Poppins", sans-serif;
+    background: linear-gradient(135deg, #141e30, #243b55);
+    color: #fff;
+    text-align: center;
+    margin: 0;
+    padding: 40px;
+  }
+  h1 { font-size: 2em; margin-bottom: 20px; }
+  .card {
+    background: rgba(255,255,255,0.1);
+    padding: 25px;
+    border-radius: 15px;
+    box-shadow: 0 0 10px rgba(0,0,0,0.3);
+    width: 90%;
+    max-width: 420px;
+    margin: 20px auto;
+  }
+  input[type="file"], input[type="text"] {
+    width: 90%;
+    margin: 10px auto;
+    padding: 10px;
+    border-radius: 8px;
+    border: none;
+  }
+  button {
+    background: #00bfff;
+    color: white;
+    border: none;
+    padding: 12px 20px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: 0.3s;
+    margin: 10px;
+  }
+  button:hover { background: #0099cc; }
+  #qrCanvas, #reader {
+    margin: 10px auto;
+    background: white;
+    padding: 10px;
+    border-radius: 10px;
+    display: none;
+  }
+  #progress {
+    width: 90%;
+    background: #333;
+    border-radius: 10px;
+    margin: 15px auto;
+    overflow: hidden;
+    height: 20px;
+  }
+  #progress div {
+    height: 100%;
+    width: 0%;
+    background: #00ff99;
+    transition: width 0.3s;
+  }
+  #status {
+    margin-top: 10px;
+    font-weight: bold;
+  }
+</style>
+</head>
+<body>
+
+<h1>⚡ Web SHAREit Clone (QR Scan)</h1>
+<p>Share files instantly between two phones using QR scan</p>
+
+<div class="card">
+  <h2>📤 Sender</h2>
+  <input type="file" id="fileInput"><br>
+  <button id="createOfferBtn">Create QR Code</button>
+  <canvas id="qrCanvas"></canvas>
+  <p><small>Receiver can scan this QR code</small></p>
+</div>
+
+<div class="card">
+  <h2>📥 Receiver</h2>
+  <button id="scanQRBtn">📷 Scan QR Code</button><br>
+  <div id="reader" style="width:300px"></div>
+</div>
+
+<div id="progress"><div></div></div>
+<p id="status">Idle</p>
+
+<script src="https://cdn.jsdelivr.net/npm/qrious/dist/qrious.min.js"></script>
+<script src="https://unpkg.com/html5-qrcode"></script>
+<script>
+let pc, dataChannel, fileReader, file;
+let receivedBuffer = [], receivedSize = 0, currentFileName = "";
+let isSender = false;
+
+// Peer connection setup
+function createPeerConnection() {
+  pc = new RTCPeerConnection();
+  pc.onicecandidate = e => {
+    if (e.candidate) return;
+    if (isSender) {
+      const offerCode = btoa(JSON.stringify(pc.localDescription));
+      showQRCode(offerCode);
+    }
+  };
+  pc.ondatachannel = e => {
+    dataChannel = e.channel;
+    setupDataChannel();
+  };
+}
+
+// Setup data channel
+function setupDataChannel() {
+  dataChannel.onopen = () => {
+    document.getElementById("status").textContent = "✅ Connected!";
+    if (file && isSender) sendFile(file);
+  };
+  dataChannel.onmessage = e => {
+    if (typeof e.data === "string" && e.data.startsWith("FILE:")) {
+      currentFileName = e.data.substring(5);
+      receivedBuffer = [];
+      receivedSize = 0;
+      document.getElementById("status").textContent = "Receiving " + currentFileName;
+    } else if (e.data === "EOF") {
+      const blob = new Blob(receivedBuffer);
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = currentFileName;
+      a.click();
+      document.getElementById("status").textContent = "✅ File received!";
+      document.querySelector("#progress div").style.width = "100%";
+    } else {
+      receivedBuffer.push(e.data);
+      receivedSize += e.data.byteLength;
+      document.querySelector("#progress div").style.width = (receivedSize / file.size * 100) + "%";
+    }
+  };
+}
+
+// QR generator
+function showQRCode(text) {
+  const qr = new QRious({
+    element: document.getElementById("qrCanvas"),
+    value: text,
+    size: 200
+  });
+  document.getElementById("qrCanvas").style.display = "block";
+  document.getElementById("status").textContent = "📱 Receiver can scan this QR code now.";
+}
+
+// Sender
+document.getElementById("createOfferBtn").onclick = async () => {
+  isSender = true;
+  createPeerConnection();
+  dataChannel = pc.createDataChannel("fileTransfer");
+  setupDataChannel();
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  document.getElementById("status").textContent = "Generating QR code...";
+};
+
+// Receiver QR Scan
+document.getElementById("scanQRBtn").onclick = async () => {
+  document.getElementById("reader").style.display = "block";
+  const html5QrCode = new Html5Qrcode("reader");
+  const config = { fps: 10, qrbox: 250 };
+
+  html5QrCode.start(
+    { facingMode: "environment" },
+    config,
+    async (decodedText) => {
+      document.getElementById("status").textContent = "QR detected! Connecting...";
+      html5QrCode.stop();
+      await connectAsReceiver(decodedText);
+    },
+    (errorMessage) => { /* ignore decode errors */ }
+  );
+};
+
+// Receiver connect function
+async function connectAsReceiver(offerCode) {
+  createPeerConnection();
+  const offer = JSON.parse(atob(offerCode));
+  await pc.setRemoteDescription(offer);
+  const answer = await pc.createAnswer();
+  await pc.setLocalDescription(answer);
+  document.getElementById("status").textContent = "Connected. Waiting for file...";
+}
+
+// File selection
+document.getElementById("fileInput").onchange = e => {
+  file = e.target.files[0];
+};
+
+// File sending
+function sendFile(file) {
+  dataChannel.send("FILE:" + file.name);
+  const chunkSize = 16384;
+  fileReader = new FileReader();
+  let offset = 0;
+
+  fileReader.onload = e => {
+    dataChannel.send(e.target.result);
+    offset += e.target.result.byteLength;
+    document.querySelector("#progress div").style.width = (offset / file.size * 100) + "%";
+    if (offset < file.size) readSlice(offset);
+    else {
+      dataChannel.send("EOF");
+      document.getElementById("status").textContent = "✅ File sent!";
+    }
+  };
+
+  const readSlice = o => {
+    const slice = file.slice(o, o + chunkSize);
+    fileReader.readAsArrayBuffer(slice);
+  };
+  readSlice(0);
+}
+</script>
+
+</body>
+</html>
